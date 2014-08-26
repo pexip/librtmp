@@ -4,7 +4,8 @@ librtmpincludedir = $(includedir)/librtmp
 librtmpinclude_HEADERS = \
   amf.h \
   log.h \
-  rtmp.h
+  rtmp.h \
+  rtmp_sys.h
 
 librtmp_la_SOURCES = \
   amf.c \
@@ -18,5 +19,8 @@ librtmp_la_CFLAGS =
 # this implementation is LGPL, and hence we can't build
 # it statically:
 librtmp_la_LDFLAGS = \
-  -shared
+  -shared \
+  -lcrypto \
+  -lssl \
+  -lz
 
