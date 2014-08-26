@@ -2,6 +2,8 @@ lib_LTLIBRARIES = librtmp.la
 
 librtmpincludedir = $(includedir)/librtmp
 librtmpinclude_HEADERS = \
+  amf.h \
+  log.h \
   rtmp.h
 
 librtmp_la_SOURCES = \
