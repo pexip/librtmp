@@ -4,6 +4,9 @@ AG_PEXBUILD_INIT
 
 #PKG_CHECK_MODULES([libcrypto], [libcrypto >= 1.0.0])
 
+CRYPTO_REQ="libssl,libcrypto"
+AC_SUBST(CRYPTO_REQ)
+
 AC_CONFIG_FILES([
   Makefile
   src/Makefile
