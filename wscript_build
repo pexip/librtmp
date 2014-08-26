@@ -1,0 +1,6 @@
+#!/usr/bin/env python
+
+bld (features = "autotools",
+     name = "librtmp",
+     target = bld.path.abspath())
+
