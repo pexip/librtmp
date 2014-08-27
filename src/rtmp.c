@@ -4297,7 +4297,7 @@ RTMPSockBuf_Send(RTMPSockBuf *sb, const char *buf, int len)
   else
 #endif
     {
-      rc = send(sb->sb_socket, buf, len, 0);
+      rc = send(sb->sb_socket, buf, len, MSG_NOSIGNAL);
     }
   return rc;
 }
