@@ -949,6 +949,9 @@ RTMP_Connect0(RTMP *r, struct sockaddr * service)
   }
 
   setsockopt(r->m_sb.sb_socket, IPPROTO_TCP, TCP_NODELAY, (char *) &on, sizeof(on));
+#ifdef __APPLE__
+  signal (SIGPIPE, SIG_IGN);
+#endif
 
   return TRUE;
 }
@@ -4297,7 +4300,11 @@ RTMPSockBuf_Send(RTMPSockBuf *sb, const char *buf, int len)
   else
 #endif
     {
+#ifdef __APPLE__
+      rc = send(sb->sb_socket, buf, len, 0);
+#else
       rc = send(sb->sb_socket, buf, len, MSG_NOSIGNAL);
+#endif
     }
   return rc;
 }
