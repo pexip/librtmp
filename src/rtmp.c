@@ -183,6 +183,7 @@ RTMPPacket_Reset(RTMPPacket *p)
   p->m_hasAbsTimestamp = FALSE;
   p->m_nBodySize = 0;
   p->m_nBytesRead = 0;
+  p->m_nAbsTimeStamp = 0;
 }
 
 int
@@ -3897,7 +3898,6 @@ int
 RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 {
   const RTMPPacket *prevPacket;
-  uint32_t last = 0;
   int nSize;
   int hSize, cSize;
   char *header, *hptr, *hend, hbuf[RTMP_MAX_HEADER_SIZE], c;
@@ -3924,16 +3924,23 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
   prevPacket = r->m_vecChannelsOut[packet->m_nChannel];
   if (prevPacket && packet->m_headerType != RTMP_PACKET_SIZE_LARGE)
     {
+      /* use delta timestamp */
+      if ((prevPacket->m_packetType == packet->m_packetType) &&
+          (packet->m_packetType == RTMP_PACKET_TYPE_AUDIO ||
+           packet->m_packetType == RTMP_PACKET_TYPE_VIDEO)) {
+        packet->m_nTimeStamp = packet->m_nAbsTimeStamp - prevPacket->m_nAbsTimeStamp;
+      }
+
       /* compress a bit by using the prev packet's attributes */
       if (prevPacket->m_nBodySize == packet->m_nBodySize
 	  && prevPacket->m_packetType == packet->m_packetType
-	  && packet->m_headerType == RTMP_PACKET_SIZE_MEDIUM)
-	packet->m_headerType = RTMP_PACKET_SIZE_SMALL;
+	  && packet->m_headerType == RTMP_PACKET_SIZE_MEDIUM) {
+        packet->m_headerType = RTMP_PACKET_SIZE_SMALL;
+      }
 
       if (prevPacket->m_nTimeStamp == packet->m_nTimeStamp
 	  && packet->m_headerType == RTMP_PACKET_SIZE_SMALL)
-	packet->m_headerType = RTMP_PACKET_SIZE_MINIMUM;
-      last = prevPacket->m_nTimeStamp;
+        packet->m_headerType = RTMP_PACKET_SIZE_MINIMUM;
     }
 
   if (packet->m_headerType > 3)	/* sanity */
@@ -3945,7 +3952,7 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 
   nSize = packetSize[packet->m_headerType];
   hSize = nSize; cSize = 0;
-  t = packet->m_nTimeStamp - last;
+  t = packet->m_nTimeStamp;
 
   if (packet->m_body)
     {
@@ -5113,11 +5120,12 @@ RTMP_Write(RTMP *r, const char *buf, int size)
 	  pkt->m_packetType = *buf++;
 	  pkt->m_nBodySize = AMF_DecodeInt24(buf);
 	  buf += 3;
-	  pkt->m_nTimeStamp = AMF_DecodeInt24(buf);
+	  pkt->m_nAbsTimeStamp = AMF_DecodeInt24(buf);
 	  buf += 3;
-	  pkt->m_nTimeStamp |= *buf++ << 24;
+	  pkt->m_nAbsTimeStamp |= *buf++ << 24;
 	  buf += 3;
 	  s2 -= 11;
+                  pkt->m_nTimeStamp = pkt->m_nAbsTimeStamp;
 
 	  if (((pkt->m_packetType == RTMP_PACKET_TYPE_AUDIO
                 || pkt->m_packetType == RTMP_PACKET_TYPE_VIDEO) &&
