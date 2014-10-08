@@ -4271,7 +4271,7 @@ RTMPSockBuf_Fill(RTMPSockBuf *sb)
 	  if (sockerr == EINTR && !RTMP_ctrlC)
 	    continue;
 
-	  if (sockerr == EWOULDBLOCK || sockerr == EAGAIN)
+	  if (sockerr == EWOULDBLOCK || sockerr == EAGAIN || sockerr == EPIPE)
 	    {
 	      sb->sb_timedout = TRUE;
 	      nBytes = 0;
