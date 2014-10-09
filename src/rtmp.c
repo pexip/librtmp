@@ -1310,6 +1310,10 @@ RTMP_ClientPacket(RTMP *r, RTMPPacket *packet)
 	   obj.Dump();
 #endif
 
+  if (packet->m_nBodySize == 0) {
+    bHasMediaPacket = 0;
+    break;
+  }
 	if (HandleInvoke(r, packet->m_body + 1, packet->m_nBodySize - 1) == 1)
 	  bHasMediaPacket = 2;
 	break;
