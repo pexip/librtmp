@@ -914,8 +914,6 @@ RTMP_Connect0(RTMP *r, struct sockaddr * service)
       if (connect(r->m_sb.sb_socket, service, sizeof(struct sockaddr)) < 0)
 	{
 	  int err = GetSockError();
-	  RTMP_Log(RTMP_LOGERROR, "%s, failed to connect socket. %d (%s)",
-	      __FUNCTION__, err, strerror(err));
 	  RTMP_Close(r);
 	  return FALSE;
 	}
