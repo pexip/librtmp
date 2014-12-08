@@ -240,6 +240,7 @@ extern "C"
     int m_inChunkSize;
     int m_outChunkSize;
     int m_nBWCheckCounter;
+    int m_nPacketsSent;
     int m_nBytesIn;
     int m_nBytesInSent;
     int m_nBufferMS;
