@@ -3908,6 +3908,7 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
   int nChunkSize;
   int tlen;
 
+  r->m_nPacketsSent += 1;
   if (packet->m_nChannel >= r->m_channelsAllocatedOut)
     {
       int n = packet->m_nChannel + 10;
@@ -4152,6 +4153,7 @@ CloseInternal(RTMP *r, int reconnect)
   r->m_stream_id = -1;
   r->m_sb.sb_socket = -1;
   r->m_nBWCheckCounter = 0;
+  r->m_nPacketsSent = 0;
   r->m_nBytesIn = 0;
   r->m_nBytesInSent = 0;
 
