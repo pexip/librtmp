@@ -66,6 +66,8 @@ static const char *my_dhm_G = "4";
 TLS_CTX RTMP_TLS_ctx;
 #endif
 
+#include <signal.h>
+
 #define RTMP_SIG_SIZE 1536
 #define RTMP_LARGE_HEADER_SIZE 12
 
@@ -326,6 +328,8 @@ RTMP_Free(RTMP *r)
 void
 RTMP_Init(RTMP *r)
 {
+  signal(SIGPIPE, SIG_IGN);
+
 #ifdef CRYPTO
   if (!RTMP_TLS_ctx)
     RTMP_TLS_Init();
