@@ -3959,7 +3959,7 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
       /* for same header and same timestamp (delta) use type 3, but not for extended timestamps */
       if (prevPacket->m_nTimeStamp == packet->m_nTimeStamp
 	  && packet->m_headerType == RTMP_PACKET_SIZE_SMALL
-                  && packet->m_nAbsTimeStamp < 0xffffff)
+                  && packet->m_nTimeStamp < 0xffffff)
 	packet->m_headerType = RTMP_PACKET_SIZE_MINIMUM;
     }
 
