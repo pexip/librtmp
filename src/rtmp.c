@@ -3666,9 +3666,14 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 	}
     }
 
+  /* check for extended timestamp, or if we already have had an extended timestamp,
+     and have to re-read it as part of each chunks header (What Flash does) */
   extendedTimestamp = packet->m_nTimeStamp == 0xffffff;
+  if (r->m_vecChannelsIn[packet->m_nChannel])
+    extendedTimestamp |= r->m_vecChannelsIn[packet->m_nChannel]->m_nTimeStamp == 0xffffff;
+
   if (extendedTimestamp)
-    {
+  {
       if (ReadN(r, header + nSize, 4) != 4)
 	{
 	  RTMP_Log(RTMP_LOGERROR, "%s, failed to read extended timestamp",
@@ -3676,8 +3681,12 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 	  return FALSE;
 	}
       packet->m_nTimeStamp = AMF_DecodeInt32(header + nSize);
+      //printf ("librtmp: got ext-timestamp %u\n", packet->m_nTimeStamp);
+
+      /* extended timestamps are always absolute */
+      packet->m_hasAbsTimestamp = TRUE;
       hSize += 4;
-    }
+  }
 
   RTMP_LogHexString(RTMP_LOGDEBUG2, (uint8_t *)hbuf, hSize);
 
@@ -3717,6 +3726,9 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 
   packet->m_nBytesRead += nChunk;
 
+  //printf ("librtmp: read chunk %u (%u / %u)\n",
+  //    nChunk, packet->m_nBytesRead, packet->m_nBodySize);
+
   /* keep the packet as ref for other packets on this channel */
   if (!r->m_vecChannelsIn[packet->m_nChannel])
     r->m_vecChannelsIn[packet->m_nChannel] = malloc(sizeof(RTMPPacket));
@@ -3730,7 +3742,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
     {
       /* make packet's timestamp absolute */
       if (!packet->m_hasAbsTimestamp)
-	packet->m_nTimeStamp += r->m_channelTimestamp[packet->m_nChannel];	/* timestamps seem to be always relative!! */
+        packet->m_nTimeStamp += r->m_channelTimestamp[packet->m_nChannel];	/* timestamps seem to be always relative!! */
 
       r->m_channelTimestamp[packet->m_nChannel] = packet->m_nTimeStamp;
 
@@ -3739,6 +3751,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
       r->m_vecChannelsIn[packet->m_nChannel]->m_body = NULL;
       r->m_vecChannelsIn[packet->m_nChannel]->m_nBytesRead = 0;
       r->m_vecChannelsIn[packet->m_nChannel]->m_hasAbsTimestamp = FALSE;	/* can only be false if we reuse header */
+      r->m_vecChannelsIn[packet->m_nChannel]->m_nTimeStamp = 0;
     }
   else
     {
@@ -3932,8 +3945,8 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
   prevPacket = r->m_vecChannelsOut[packet->m_nChannel];
   if (prevPacket && packet->m_headerType != RTMP_PACKET_SIZE_LARGE)
     {
-      /* calculate the timestamp delta */
-      if (packet->m_hasAbsTimestamp && prevPacket->m_hasAbsTimestamp)
+      /* calculate the timestamp delta for non-extended timestamps */
+      if (packet->m_hasAbsTimestamp && prevPacket->m_hasAbsTimestamp && packet->m_nAbsTimeStamp < 0xffffff)
         packet->m_nTimeStamp = packet->m_nAbsTimeStamp - prevPacket->m_nAbsTimeStamp;
 
       /* compress a bit by using the prev packet's attributes */
@@ -3942,8 +3955,11 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 	  && packet->m_headerType == RTMP_PACKET_SIZE_MEDIUM)
 	packet->m_headerType = RTMP_PACKET_SIZE_SMALL;
 
+
+      /* for same header and same timestamp (delta) use type 3, but not for extended timestamps */
       if (prevPacket->m_nTimeStamp == packet->m_nTimeStamp
-	  && packet->m_headerType == RTMP_PACKET_SIZE_SMALL)
+	  && packet->m_headerType == RTMP_PACKET_SIZE_SMALL
+                  && packet->m_nAbsTimeStamp < 0xffffff)
 	packet->m_headerType = RTMP_PACKET_SIZE_MINIMUM;
     }
 
@@ -4072,18 +4088,32 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 	  header = buffer - 1;
 	  hSize = 1;
 	  if (cSize)
-	    {
-	      header -= cSize;
-	      hSize += cSize;
-	    }
+                  {
+                    header -= cSize;
+                    hSize += cSize;
+                  }
+                  if (t >= 0xffffff)
+                  {
+                    header -= 4;
+                    hSize += 4;
+                  }
+
 	  *header = (0xc0 | c);
+                  hptr = header;
 	  if (cSize)
-	    {
-	      int tmp = packet->m_nChannel - 64;
-	      header[1] = tmp & 0xff;
-	      if (cSize == 2)
-		header[2] = tmp >> 8;
-	    }
+                  {
+                    int tmp = packet->m_nChannel - 64;
+                    *(++hptr) = tmp & 0xff;
+                    if (cSize == 2)
+                      *(++hptr) = tmp >> 8;
+                  }
+
+                  if (t >= 0xffffff)
+                  {
+                    hptr++;
+                    hptr = AMF_EncodeInt32(hptr, hptr + 4, t);
+                    assert (hptr != NULL);
+                  }
 	}
     }
   if (tbuf)
