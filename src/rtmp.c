@@ -4362,8 +4362,11 @@ RTMPSockBuf_Close(RTMPSockBuf *sb)
       sb->sb_ssl = NULL;
     }
 #endif
-  if (sb->sb_socket != -1)
+
+  if (sb->sb_socket != -1) {
+      shutdown (sb->sb_socket, SHUT_RDWR);
       return closesocket(sb->sb_socket);
+  }
   return 0;
 }
 
