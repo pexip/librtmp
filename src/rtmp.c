@@ -892,11 +892,11 @@ add_addr_info(struct addrinfo **service, AVal *host, int port)
 
   snprintf(port_as_string, 16, "%d", port);
 
-  if (getaddrinfo(hostname, port_as_string, &hints, service) != 0)
+  int error;
+  if (error = getaddrinfo(hostname, port_as_string, &hints, service) != 0)
     {
-      RTMP_Log(RTMP_LOGERROR, "Problem accessing the DNS. (addr: %s)", hostname);
+      RTMP_Log(RTMP_LOGERROR, "Problem accessing the DNS. (addr: %s) - %s", hostname, gai_strerror(error));
       ret = FALSE;
-      freeaddrinfo(*service);
       goto finish;
     }
 
