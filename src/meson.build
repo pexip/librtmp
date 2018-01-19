@@ -5,7 +5,7 @@ librtmp_headers = [
   'rtmp_sys.h',
 ]
 
-install_headers(librtmp_headers, subdir : 'rtmp')
+install_headers(librtmp_headers, subdir : 'librtmp')
 
 librtmp_sources = [
   'amf.c',
@@ -15,7 +15,7 @@ librtmp_sources = [
   'rtmp.c'
 ]
 
-rtmp_lib = shared_library('librtmp',
+rtmp_lib = shared_library('rtmp',
   librtmp_sources,
   dependencies : [libssl_dep, libcrypto_dep, libz_dep],
   install : true,
