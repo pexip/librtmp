@@ -1059,7 +1059,7 @@ HandShake(RTMP * r, int FP9HandShake)
     {
       if (memcmp(serversig, clientsig, RTMP_SIG_SIZE) != 0)
 	{
-	  RTMP_Log(RTMP_LOGWARNING, "%s: client signature does not match!",
+	  RTMP_Log(RTMP_LOGINFO, "%s: client signature does not match!",
 	      __FUNCTION__);
 	}
     }

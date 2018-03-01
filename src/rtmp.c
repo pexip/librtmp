@@ -1538,7 +1538,7 @@ WriteN(RTMP *r, const char *buffer, int n)
       if (nBytes < 0)
 	{
 	  int sockerr = GetSockError();
-	  RTMP_Log(RTMP_LOGERROR, "%s, RTMP send error %d (%d bytes)", __FUNCTION__,
+	  RTMP_Log(RTMP_LOGINFO, "%s, RTMP send error %d (%d bytes)", __FUNCTION__,
 	      sockerr, n);
 
 	  if (sockerr == EINTR && !RTMP_ctrlC)
@@ -3567,7 +3567,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 
   if (ReadN(r, (char *)hbuf, 1) == 0)
     {
-      RTMP_Log(RTMP_LOGERROR, "%s, failed to read RTMP packet header", __FUNCTION__);
+      RTMP_Log(RTMP_LOGINFO, "%s, failed to read RTMP packet header", __FUNCTION__);
       return FALSE;
     }
 
@@ -3821,7 +3821,7 @@ HandShake(RTMP *r, int FP9HandShake)
   bMatch = (memcmp(serversig, clientsig, RTMP_SIG_SIZE) == 0);
   if (!bMatch)
     {
-      RTMP_Log(RTMP_LOGWARNING, "%s, client signature does not match!", __FUNCTION__);
+      RTMP_Log(RTMP_LOGINFO "%s, client signature does not match!", __FUNCTION__);
     }
   return TRUE;
 }
@@ -3884,7 +3884,7 @@ SHandShake(RTMP *r)
   bMatch = (memcmp(serversig, clientsig, RTMP_SIG_SIZE) == 0);
   if (!bMatch)
     {
-      RTMP_Log(RTMP_LOGWARNING, "%s, client signature does not match!", __FUNCTION__);
+      RTMP_Log(RTMP_LOGINFO, "%s, client signature does not match!", __FUNCTION__);
     }
   return TRUE;
 }
