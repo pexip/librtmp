@@ -2976,8 +2976,10 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
 	    }
 	  if (r->Link.protocol & RTMP_FEATURE_WRITE)
 	    {
-	      SendReleaseStream(r);
-	      SendFCPublish(r);
+	      if (!SendReleaseStream(r))
+	        return 0;
+	      if (!SendFCPublish(r))
+	        return 0;
 	    }
 	  else
 	    {
