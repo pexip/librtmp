@@ -2934,6 +2934,7 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
   if (nRes < 0)
     {
       RTMP_Log(RTMP_LOGERROR, "%s, error decoding invoke packet", __FUNCTION__);
+      AMF_Reset(&obj);
       return 0;
     }
 
@@ -2977,9 +2978,15 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
 	  if (r->Link.protocol & RTMP_FEATURE_WRITE)
 	    {
 	      if (!SendReleaseStream(r))
-	        return 0;
+                {
+                  free(methodInvoked.av_val);
+                  goto leave;
+                }
 	      if (!SendFCPublish(r))
-	        return 0;
+                {
+                  free(methodInvoked.av_val);
+                  goto leave;
+                }
 	    }
 	  else
 	    {
@@ -3096,7 +3103,10 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
               {
                 CloseInternal(r, 1);
                 if (!RTMP_Connect(r, NULL) || !RTMP_ConnectStream(r, 0))
-                  goto leave;
+                  {
+                    free(methodInvoked.av_val);
+                    goto leave;
+                  }
               }
             }
         }
