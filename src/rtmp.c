@@ -919,7 +919,6 @@ RTMP_Connect0(RTMP *r, struct addrinfo * service)
     {
       if (connect(r->m_sb.sb_socket, service->ai_addr, service->ai_addrlen) < 0)
 	{
-	  int err = GetSockError();
 	  RTMP_Close(r);
 	  return FALSE;
 	}
