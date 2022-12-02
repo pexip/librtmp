@@ -30,7 +30,7 @@
 #ifndef SHA256_DIGEST_LENGTH
 #define SHA256_DIGEST_LENGTH	32
 #endif
-#define HMAC_CTX	sha2_context
+#define rtmp_HMAC_CTX	sha2_context
 #define HMAC_setup(ctx, key, len)	sha2_hmac_starts(ctx, (unsigned char *)key, len, 0)
 #define HMAC_crunch(ctx, buf, len)	sha2_hmac_update(ctx, buf, len)
 #define HMAC_finish(ctx, dig, dlen)	dlen = SHA256_DIGEST_LENGTH; sha2_hmac_finish(ctx, dig)
@@ -48,8 +48,7 @@ typedef arc4_context *	RC4_handle;
 #ifndef SHA256_DIGEST_LENGTH
 #define SHA256_DIGEST_LENGTH	32
 #endif
-#undef HMAC_CTX
-#define HMAC_CTX	struct hmac_sha256_ctx
+#define rtmp_HMAC_CTX	struct hmac_sha256_ctx
 #define HMAC_setup(ctx, key, len)	hmac_sha256_set_key(ctx, len, key)
 #define HMAC_crunch(ctx, buf, len)	hmac_sha256_update(ctx, len, buf)
 #define HMAC_finish(ctx, dig, dlen)	dlen = SHA256_DIGEST_LENGTH; hmac_sha256_digest(ctx, SHA256_DIGEST_LENGTH, dig)
@@ -63,31 +62,101 @@ typedef struct arcfour_ctx*	RC4_handle;
 #define RC4_free(h)	free(h)
 
 #else	/* USE_OPENSSL */
-#include <openssl/sha.h>
-#include <openssl/ossl_typ.h>
-#include <openssl/hmac.h>
-#include <openssl/rc4.h>
-#if OPENSSL_VERSION_NUMBER < 0x0090800 || !defined(SHA256_DIGEST_LENGTH)
-#error Your OpenSSL is too old, need 0.9.8 or newer with SHA256
-#endif
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-#define HMAC_setup(ctx, key, len)	HMAC_CTX_init(ctx); HMAC_Init_ex(ctx, key, len, EVP_sha256(), 0)
-#else
-#define HMAC_setup(ctx, key, len)	ctx = HMAC_CTX_new(); HMAC_CTX_reset(ctx); HMAC_Init_ex(ctx, key, len, EVP_sha256(), 0)
-#endif
-#define HMAC_crunch(ctx, buf, len)	HMAC_Update(ctx, buf, len)
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-#define HMAC_finish(ctx, dig, dlen)	HMAC_Final(ctx, dig, &dlen); HMAC_CTX_cleanup(ctx)
-#else
-#define HMAC_finish(ctx, dig, dlen)     HMAC_Final(ctx, dig, &dlen); HMAC_CTX_free(ctx)
-#endif
-
+# include <openssl/evp.h>
+# include <openssl/sha.h>
+# include <openssl/ossl_typ.h>
+# if OPENSSL_VERSION_NUMBER < 0x30000000L
+#  include <openssl/hmac.h>
+#  include <openssl/rc4.h>
+#  define rtmp_HMAC_CTX	HMAC_CTX
+#  if OPENSSL_VERSION_NUMBER < 0x0090800 || !defined(SHA256_DIGEST_LENGTH)
+#   error Your OpenSSL is too old, need 0.9.8 or newer with SHA256
+#  endif
+#  if OPENSSL_VERSION_NUMBER < 0x10100000L
+#   define HMAC_setup(ctx, key, len)	HMAC_CTX_init(ctx); HMAC_Init_ex(ctx, key, len, EVP_sha256(), 0)
+#  else
+#   define HMAC_setup(ctx, key, len)	ctx = HMAC_CTX_new(); HMAC_CTX_reset(ctx); HMAC_Init_ex(ctx, key, len, EVP_sha256(), 0)
+#  endif
+#  define HMAC_crunch(ctx, buf, len)	HMAC_Update(ctx, buf, len)
+#  if OPENSSL_VERSION_NUMBER < 0x10100000L
+#   define HMAC_finish(ctx, dig, dlen)	HMAC_Final(ctx, dig, &dlen); HMAC_CTX_cleanup(ctx)
+#  else
+#   define HMAC_finish(ctx, dig, dlen)     HMAC_Final(ctx, dig, &dlen); HMAC_CTX_free(ctx)
+#  endif
 typedef RC4_KEY *	RC4_handle;
-#define RC4_alloc(h)	*h = malloc(sizeof(RC4_KEY))
-#define RC4_setkey(h,l,k)	RC4_set_key(h,l,k)
-#define RC4_encrypt(h,l,d)	RC4(h,l,(uint8_t *)d,(uint8_t *)d)
-#define RC4_encrypt2(h,l,s,d)	RC4(h,l,(uint8_t *)s,(uint8_t *)d)
-#define RC4_free(h)	free(h)
+#  define RC4_alloc(h)	*h = malloc(sizeof(RC4_KEY))
+#  define RC4_setkey(h,l,k)	RC4_set_key(h,l,k)
+#  define RC4_encrypt(h,l,d)	RC4(h,l,(uint8_t *)d,(uint8_t *)d)
+#  define RC4_encrypt2(h,l,s,d)	RC4(h,l,(uint8_t *)s,(uint8_t *)d)
+#  define RC4_free(h)	free(h)
+# else
+#  include <openssl/crypto.h>
+#  include <openssl/params.h>
+#  include <openssl/provider.h>
+#  define rtmp_HMAC_CTX EVP_MAC_CTX
+#  define HMAC_setup(ctx, key, len) \
+	do { \
+		OSSL_PARAM __params[2]; \
+		EVP_MAC * __mac; \
+		__params[0] = OSSL_PARAM_construct_utf8_string("digest", "SHA256", 0); \
+		__params[1] = OSSL_PARAM_construct_end(); \
+		__mac = EVP_MAC_fetch(NULL, "HMAC", NULL); \
+		ctx = EVP_MAC_CTX_new(__mac); \
+		EVP_MAC_init(ctx, (const unsigned char *)key, len, __params); \
+		EVP_MAC_free(__mac); \
+	} while (0)
+#  define HMAC_crunch(ctx, buf, len)	EVP_MAC_update(ctx, (const unsigned char *)buf, len)
+#  define HMAC_finish(ctx, dig, dlen) \
+	do { \
+		size_t __outl; \
+		EVP_MAC_final(ctx, (unsigned char *)dig, &__outl, SHA256_DIGEST_LENGTH); \
+		dlen = __outl; \
+	} while(0)
+#  define HMAC_close(ctx) EVP_MAC_CTX_free(ctx)
+typedef struct {
+    OSSL_LIB_CTX *lc;
+    OSSL_PROVIDER *prov;
+    EVP_CIPHER *cipher;
+    EVP_CIPHER_CTX *ctx;
+} rtmp_RC4_CTX;
+typedef rtmp_RC4_CTX *	RC4_handle;
+#  define RC4_alloc(h) \
+	do { \
+		RC4_handle __h = malloc(sizeof(rtmp_RC4_CTX)); \
+		__h->lc = OSSL_LIB_CTX_new(); \
+		__h->prov = OSSL_PROVIDER_load(__h->lc, "legacy"); \
+		__h->cipher = EVP_CIPHER_fetch(__h->lc, "RC4", NULL); \
+		__h->ctx = EVP_CIPHER_CTX_new(); \
+		*(h) = __h; \
+	} while(0)
+#  define RC4_setkey(h,l,k) \
+	do { \
+		EVP_EncryptInit((h)->ctx, (h)->cipher, NULL, NULL); \
+		EVP_CIPHER_CTX_set_key_length((h)->ctx, l); \
+		EVP_CIPHER_CTX_set_padding((h)->ctx, 0); \
+		EVP_EncryptInit((h)->ctx, NULL, k, NULL); \
+	} while (0)
+#  define RC4_encrypt(h,l,d) \
+	do { \
+		RC4_handle __h = (h); \
+		int __outl = l; \
+		EVP_EncryptUpdate(__h->ctx, (unsigned char *)d, &__outl, (const unsigned char *)d, l); \
+	} while(0)
+#  define RC4_encrypt2(h,l,s,d) \
+	do { \
+		RC4_handle __h = (h); \
+		int __outl = l; \
+		EVP_EncryptUpdate(__h->ctx, (unsigned char *)d, &__outl, (const unsigned char *)s, l); \
+	} while(0)
+#  define RC4_free(h) \
+	do { \
+		RC4_handle __h = (h); \
+		EVP_CIPHER_free(__h->cipher); \
+		OSSL_PROVIDER_unload(__h->prov); \
+		OSSL_LIB_CTX_free(__h->lc); \
+		free(__h); \
+	} while(0)
+# endif
 #endif
 
 #define FP10
@@ -126,7 +195,7 @@ static void InitRC4Encryption
 {
   uint8_t digest[SHA256_DIGEST_LENGTH];
   unsigned int digestLen = 0;
-  HMAC_CTX* ctx = NULL;
+  rtmp_HMAC_CTX* ctx = NULL;
 
   RC4_alloc(rc4keyIn);
   RC4_alloc(rc4keyOut);
@@ -275,7 +344,7 @@ HMACsha256(const uint8_t *message, size_t messageLen, const uint8_t *key,
 	   size_t keylen, uint8_t *digest)
 {
   unsigned int digestLen;
-  HMAC_CTX* ctx = NULL;
+  rtmp_HMAC_CTX* ctx = NULL;
 
   HMAC_setup(ctx, key, keylen);
   HMAC_crunch(ctx, message, messageLen);
