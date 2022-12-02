@@ -245,9 +245,11 @@ RTMP_TLS_Init()
   	"ca.pem", GNUTLS_X509_FMT_PEM);
 #elif !defined(NO_SSL) /* USE_OPENSSL */
   /* libcrypto doesn't need anything special */
+# if OPENSSL_VERSION_NUMBER < 0x10100000L
   SSL_load_error_strings();
   SSL_library_init();
   OpenSSL_add_all_digests();
+# endif
   RTMP_TLS_ctx = SSL_CTX_new(SSLv23_method());
   SSL_CTX_set_options(RTMP_TLS_ctx, SSL_OP_ALL);
   SSL_CTX_set_default_verify_paths(RTMP_TLS_ctx);
