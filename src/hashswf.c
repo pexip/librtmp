@@ -36,7 +36,7 @@
 #ifndef SHA256_DIGEST_LENGTH
 #define SHA256_DIGEST_LENGTH	32
 #endif
-#define HMAC_CTX	sha2_context
+#define rtmp_HMAC_CTX	sha2_context
 #define HMAC_setup(ctx, key, len)	sha2_hmac_starts(ctx, (unsigned char *)key, len, 0)
 #define HMAC_crunch(ctx, buf, len)	sha2_hmac_update(ctx, buf, len)
 #define HMAC_finish(ctx, dig, dlen)	dlen = SHA256_DIGEST_LENGTH; sha2_hmac_finish(ctx, dig)
@@ -46,29 +46,54 @@
 #ifndef SHA256_DIGEST_LENGTH
 #define SHA256_DIGEST_LENGTH	32
 #endif
-#undef HMAC_CTX
-#define HMAC_CTX	struct hmac_sha256_ctx
+#define rtmp_HMAC_CTX	struct hmac_sha256_ctx
 #define HMAC_setup(ctx, key, len)	hmac_sha256_set_key(ctx, len, key)
 #define HMAC_crunch(ctx, buf, len)	hmac_sha256_update(ctx, len, buf)
 #define HMAC_finish(ctx, dig, dlen)	dlen = SHA256_DIGEST_LENGTH; hmac_sha256_digest(ctx, SHA256_DIGEST_LENGTH, dig)
 #define HMAC_close(ctx)
 #else	/* USE_OPENSSL */
-#include <openssl/ssl.h>
-#include <openssl/sha.h>
-#include <openssl/hmac.h>
-#include <openssl/rc4.h>
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-#define HMAC_setup(ctx, key, len)	HMAC_CTX_init(ctx); HMAC_Init_ex(ctx, (unsigned char *)key, len, EVP_sha256(), 0)
-#else
-#define HMAC_setup(ctx, key, len)	ctx = HMAC_CTX_new(); HMAC_CTX_reset(ctx); HMAC_Init_ex(ctx, key, len, EVP_sha256(), 0)
-#endif
-#define HMAC_crunch(ctx, buf, len)	HMAC_Update(ctx, (unsigned char *)buf, len)
-#define HMAC_finish(ctx, dig, dlen)	HMAC_Final(ctx, (unsigned char *)dig, &dlen);
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-#define HMAC_close(ctx)	HMAC_CTX_cleanup(ctx)
-#else
-#define HMAC_close(ctx) HMAC_CTX_reset(ctx); HMAC_CTX_free(ctx)
-#endif
+# include <openssl/ssl.h>
+# include <openssl/evp.h>
+# include <openssl/sha.h>
+# if OPENSSL_VERSION_NUMBER < 0x30000000L
+#  include <openssl/hmac.h>
+#  include <openssl/rc4.h>
+#  define rtmp_HMAC_CTX	HMAC_CTX
+#  if OPENSSL_VERSION_NUMBER < 0x10100000L
+#   define HMAC_setup(ctx, key, len)	HMAC_CTX_init(ctx); HMAC_Init_ex(ctx, (unsigned char *)key, len, EVP_sha256(), 0)
+#  else
+#   define HMAC_setup(ctx, key, len)	ctx = HMAC_CTX_new(); HMAC_CTX_reset(ctx); HMAC_Init_ex(ctx, key, len, EVP_sha256(), 0)
+#  endif
+#  define HMAC_crunch(ctx, buf, len)	HMAC_Update(ctx, (unsigned char *)buf, len)
+#  define HMAC_finish(ctx, dig, dlen)	HMAC_Final(ctx, (unsigned char *)dig, &dlen);
+#  if OPENSSL_VERSION_NUMBER < 0x10100000L
+#   define HMAC_close(ctx)	HMAC_CTX_cleanup(ctx)
+#  else
+#   define HMAC_close(ctx) HMAC_CTX_reset(ctx); HMAC_CTX_free(ctx)
+#  endif
+# else
+#  include <openssl/params.h>
+#  define rtmp_HMAC_CTX EVP_MAC_CTX
+#  define HMAC_setup(ctx, key, len) \
+	do { \
+		OSSL_PARAM __params[2]; \
+		EVP_MAC * __mac; \
+		__params[0] = OSSL_PARAM_construct_utf8_string("digest", "SHA256", 0); \
+		__params[1] = OSSL_PARAM_construct_end(); \
+		__mac = EVP_MAC_fetch(NULL, "HMAC", NULL); \
+		ctx = EVP_MAC_CTX_new(__mac); \
+		EVP_MAC_init(ctx, (const unsigned char *)key, len, __params); \
+		EVP_MAC_free(__mac); \
+	} while (0)
+#  define HMAC_crunch(ctx, buf, len)	EVP_MAC_update(ctx, (const unsigned char *)buf, len)
+#  define HMAC_finish(ctx, dig, dlen) \
+	do { \
+		size_t __outl; \
+		EVP_MAC_final(ctx, (unsigned char *)dig, &__outl, SHA256_DIGEST_LENGTH); \
+		dlen = __outl; \
+	} while(0)
+#  define HMAC_close(ctx) EVP_MAC_CTX_free(ctx)
+# endif
 #endif
 
 extern void RTMP_TLS_Init();
@@ -297,7 +322,7 @@ leave:
 struct info
 {
   z_stream *zs;
-  HMAC_CTX *ctx;
+  rtmp_HMAC_CTX *ctx;
   int first;
   int zlib;
   int size;
