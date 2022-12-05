@@ -181,11 +181,346 @@ typedef BIGNUM * MP_t;
 #define MP_setbin(u,buf,len)	BN_bn2bin(u,buf)
 #define MP_getbin(u,buf,len)	u = BN_bin2bn(buf,len,0)
 
-#define MDH	DH
-#define MDH_new()	DH_new()
-#define MDH_free(dh)	DH_free(dh)
-#define MDH_generate_key(dh)	DH_generate_key(dh)
-#define MDH_compute_key(secret, seclen, pub, dh)	DH_compute_key(secret, pub, dh)
+typedef struct {
+  MP_t p;
+  MP_t g;
+  MP_t pub_key;
+  MP_t priv_key;
+  long length;
+} MDH;
+
+#define	MDH_new()	calloc(1,sizeof(MDH))
+#define MDH_free(dh)	do {MP_free(((MDH*)(dh))->p); MP_free(((MDH*)(dh))->g); MP_free(((MDH*)(dh))->pub_key); MP_free(((MDH*)(dh))->priv_key); free(dh);} while(0)
+
+#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x30000000L
+static DH *DH_from_MDH(const MDH *mdh)
+{
+  BIGNUM *g = NULL, *p = NULL, *pub = NULL, *priv = NULL;
+  DH *dh = NULL;
+  int res;
+
+  if (mdh->p == NULL || mdh->g == NULL)
+    goto failed;
+
+  dh = DH_new();
+  if (dh == NULL)
+    goto failed;
+
+  MP_new(g);
+  if (g == NULL)
+    goto failed;
+  if (MP_set(g, mdh->g) == NULL)
+    goto failed;
+
+  MP_new(p);
+  if (p == NULL)
+    goto failed;
+  if (MP_set(p, mdh->p) == NULL)
+    goto failed;
+
+  if (mdh->pub_key != NULL) {
+    MP_new(pub);
+    if (pub == NULL)
+      goto failed;
+    if (MP_set(pub, mdh->pub_key) == NULL)
+      goto failed;
+  }
+
+  if (mdh->priv_key != NULL) {
+    MP_new(priv);
+    if (priv == NULL)
+      goto failed;
+    if (MP_set(priv, mdh->priv_key) == NULL)
+      goto failed;
+  }
+
+#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
+  dh->length = mdh->length;
+  BN_free(dh->g);
+  dh->g = g;
+  BN_free(dh->p);
+  dh->p = p;
+  if (pub != NULL) {
+    BN_free(dh->pub_key);
+    dh->pub_key = pub;
+  }
+  if (priv != NULL) {
+    BN_free(dh->priv_key);
+    dh->priv_key = priv;
+  }
+#else
+  DH_set_length(dh, mdh->length);
+  DH_set0_pqg(dh, p, NULL, g);
+  if (pub != NULL || priv != NULL)
+    DH_set0_key(dh, pub, priv);
+#endif
+
+  return dh;
+
+failed:
+  MP_free(priv);
+  MP_free(pub);
+  MP_free(p);
+  MP_free(g);
+  DH_free(dh);
+
+  return NULL;
+}
+
+static int MDH_generate_key(MDH *mdh)
+{
+  const BIGNUM *pubkey = NULL, *privkey = NULL;
+  DH *dh = NULL;
+  int res;
+
+  dh = DH_from_MDH(mdh);
+  if (dh == NULL)
+    goto failed;
+
+  res = DH_generate_key(dh);
+  if (res != 1)
+    goto failed;
+
+#if !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
+  pubkey = dh->pub_key;
+  privkey = dh->priv_key;
+#else
+  DH_get0_key(dh, &pubkey, &privkey);
+#endif
+
+  if (pubkey != NULL) {
+    MP_new(mdh->pub_key);
+    if (mdh->pub_key == NULL)
+      goto failed;
+    if (MP_set(mdh->pub_key, pubkey) == NULL)
+      goto failed;
+  }
+
+  if (privkey != NULL) {
+    MP_new(mdh->priv_key);
+    if (mdh->priv_key == NULL)
+      goto failed;
+    if (MP_set(mdh->priv_key, privkey) == NULL)
+      goto failed;
+  }
+
+  DH_free(dh);
+
+  return 1;
+
+failed:
+  MP_free(mdh->priv_key);
+  mdh->priv_key = NULL;
+
+  MP_free(mdh->pub_key);
+  mdh->pub_key = NULL;
+
+  MP_free(p);
+  MP_free(g);
+  DH_free(dh);
+
+  return 0;
+}
+
+static int MDH_compute_key(uint8_t *secret, size_t len, MP_t pub, MDH *mdh)
+{
+  DH *dh = NULL;
+  int res = -1;
+
+  dh = DH_from_MDH(mdh);
+  if (dh != NULL) {
+    res = DH_compute_key(secret, pub, dh);
+    DH_free(dh);
+  }
+
+  return res;
+}
+#else
+# include <openssl/evp.h>
+# include <openssl/params.h>
+# include <openssl/param_build.h>
+
+static EVP_PKEY *DH_from_MDH(const MDH *mdh)
+{
+  OSSL_PARAM_BLD *bld = NULL;
+  OSSL_PARAM *params = NULL;
+  EVP_PKEY_CTX *ctx = NULL;
+  EVP_PKEY *dh = NULL;
+  int selection = EVP_PKEY_KEY_PARAMETERS;
+  int res;
+
+  if (mdh->p == NULL || mdh->g == NULL)
+    goto failed;
+
+  bld = OSSL_PARAM_BLD_new();
+  if (bld == NULL)
+    goto failed;
+
+  res = OSSL_PARAM_BLD_push_int(bld, "priv_len", (int) mdh->length);
+  if (res != 1)
+    goto failed;
+
+  res = OSSL_PARAM_BLD_push_BN(bld, "g", mdh->g);
+  if (res != 1)
+    goto failed;
+
+  res = OSSL_PARAM_BLD_push_BN(bld, "p", mdh->p);
+  if (res != 1)
+    goto failed;
+
+  if (mdh->pub_key != NULL) {
+    res = OSSL_PARAM_BLD_push_BN(bld, "pub", mdh->pub_key);
+    if (res != 1)
+      goto failed;
+    selection = EVP_PKEY_PUBLIC_KEY;
+  }
+
+  if (mdh->priv_key != NULL) {
+    if (mdh->pub_key != NULL)
+      goto failed;
+
+    res = OSSL_PARAM_BLD_push_BN(bld, "priv", mdh->priv_key);
+    if (res != 1)
+      goto failed;
+    selection = EVP_PKEY_KEYPAIR;
+  }
+
+  params = OSSL_PARAM_BLD_to_param(bld);
+  if (params == NULL)
+    goto failed;
+
+  ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_DH, NULL);
+  if (ctx == NULL)
+    goto failed;
+
+  res = EVP_PKEY_fromdata_init(ctx);
+  if (res != 1)
+    goto failed;
+
+  res = EVP_PKEY_fromdata(ctx, &dh, selection, params);
+  if (res != 1)
+    goto failed;
+
+  EVP_PKEY_CTX_free(ctx);
+  OSSL_PARAM_free(params);
+  OSSL_PARAM_BLD_free(bld);
+
+  return dh;
+
+failed:
+  EVP_PKEY_free(dh);
+  EVP_PKEY_CTX_free(ctx);
+  OSSL_PARAM_free(params);
+  OSSL_PARAM_BLD_free(bld);
+
+  return NULL;
+}
+
+static int MDH_generate_key(MDH *mdh)
+{
+  EVP_PKEY_CTX *ctx = NULL;
+  EVP_PKEY *params = NULL, *dh = NULL;
+  BIGNUM *pubkey = NULL, *privkey = NULL;
+  int res;
+
+  params = DH_from_MDH(mdh);
+  if (params == NULL)
+    goto failed;
+
+  ctx = EVP_PKEY_CTX_new(params, NULL);
+  if (ctx == NULL)
+    goto failed;
+
+  res = EVP_PKEY_keygen_init(ctx);
+  if (res != 1)
+    goto failed;
+
+  res = EVP_PKEY_keygen(ctx, &dh);
+  if (res != 1)
+    goto failed;
+
+  res = EVP_PKEY_get_bn_param(dh, "pub", &pubkey);
+  if (res != 1)
+    goto failed;
+
+  res = EVP_PKEY_get_bn_param(dh, "priv", &privkey);
+  if (res != 1)
+    goto failed;
+
+  BN_clear_free(mdh->pub_key);
+  mdh->pub_key = pubkey;
+
+  BN_clear_free(mdh->priv_key);
+  mdh->priv_key = privkey;
+
+  EVP_PKEY_free(dh);
+  EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY_free(params);
+
+  return 1;
+
+failed:
+  BN_clear_free(privkey);
+  BN_clear_free(pubkey);
+  EVP_PKEY_free(dh);
+  EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY_free(params);
+
+  return 0;
+}
+
+static int MDH_compute_key(uint8_t *secret, size_t len, MP_t pub, MDH *mdh)
+{
+  EVP_PKEY *dh = NULL, *peer = NULL;
+  EVP_PKEY_CTX *ctx = NULL;
+  int res;
+  MDH pmdh;
+
+  /* Copy parameters from our key */
+  pmdh.g = mdh->g;
+  pmdh.p = mdh->p;
+  pmdh.pub_key = pub;
+  pmdh.priv_key = NULL;
+  pmdh.length = mdh->length;
+
+  dh = DH_from_MDH(mdh);
+  if (dh == NULL)
+    goto failed;
+
+  peer = DH_from_MDH(&pmdh);
+  if (peer == NULL)
+    goto failed;
+
+  ctx = EVP_PKEY_CTX_new(dh, NULL);
+  if (ctx == NULL)
+    goto failed;
+
+  res = EVP_PKEY_derive_init(ctx);
+  if (res != 1)
+    goto failed;
+
+  res = EVP_PKEY_derive_set_peer(ctx, peer);
+  if (res != 1)
+    goto failed;
+
+  res = EVP_PKEY_derive(ctx, secret, &len);
+  if (res != 1)
+    goto failed;
+
+  EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY_free(peer);
+  EVP_PKEY_free(dh);
+
+  return (int) len;
+
+failed:
+  EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY_free(peer);
+  EVP_PKEY_free(dh);
+
+  return -1;
+}
+#endif
 
 #endif
 
@@ -253,42 +588,20 @@ DHInit(int nKeyBits)
   if (!dh)
     goto failed;
 
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
   MP_new(dh->g);
-
   if (!dh->g)
     goto failed;
-#else
-  BIGNUM *g = NULL;
-  MP_new(g);
-  if (!g)
-    goto failed;
-#endif
 
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
   MP_gethex(dh->p, P1024, res);	/* prime P1024, see dhgroups.h */
-#else
-  BIGNUM* p = NULL;
-  DH_get0_pqg(dh, (BIGNUM const**)&p, NULL, NULL);
-  MP_gethex(p, P1024, res); /* prime P1024, see dhgroups.h */
-#endif
   if (!res)
     {
       goto failed;
     }
 
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
   MP_set_w(dh->g, 2);	/* base 2 */
-#else
-  MP_set_w(g, 2);   /* base 2 */
-  DH_set0_pqg(dh, p, NULL, g);
-#endif
 
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
   dh->length = nKeyBits;
-#else
-  DH_set_length(dh, nKeyBits);
-#endif
+
   return dh;
 
 failed:
@@ -315,24 +628,12 @@ DHGenerateKey(MDH *dh)
       MP_gethex(q1, Q1024, res);
       assert(res);
 
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
       res = isValidPublicKey(dh->pub_key, dh->p, q1);
-#else
-      BIGNUM const* pub_key = NULL;
-      BIGNUM const* p = NULL;
-      DH_get0_key(dh, &pub_key, NULL);
-      DH_get0_pqg(dh, &p, NULL, NULL);
-      res = isValidPublicKey((BIGNUM*)pub_key, (BIGNUM*)p, q1);
-#endif
       if (!res)
 	{
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
 	  MP_free(dh->pub_key);
 	  MP_free(dh->priv_key);
 	  dh->pub_key = dh->priv_key = 0;
-#else
-          DH_free(dh);
-#endif
 	}
 
       MP_free(q1);
@@ -348,29 +649,15 @@ static int
 DHGetPublicKey(MDH *dh, uint8_t *pubkey, size_t nPubkeyLen)
 {
   int len;
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
   if (!dh || !dh->pub_key)
-#else
-  BIGNUM const* pub_key = NULL;
-  DH_get0_key(dh, &pub_key, NULL);
-  if (!dh || !pub_key)
-#endif
     return 0;
 
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
   len = MP_bytes(dh->pub_key);
-#else
-  len = MP_bytes(pub_key);
-#endif
   if (len <= 0 || len > (int) nPubkeyLen)
     return 0;
 
   memset(pubkey, 0, nPubkeyLen);
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
   MP_setbin(dh->pub_key, pubkey + (nPubkeyLen - len), len);
-#else
-  MP_setbin(pub_key, pubkey + (nPubkeyLen - len), len);
-#endif
   return 1;
 }
 
@@ -412,13 +699,7 @@ DHComputeSharedSecretKey(MDH *dh, uint8_t *pubkey, size_t nPubkeyLen,
   MP_gethex(q1, Q1024, len);
   assert(len);
 
-#if !defined(USE_OPENSSL) || !defined(OPENSSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L
   if (isValidPublicKey(pubkeyBn, dh->p, q1))
-#else
-  BIGNUM const* p = NULL;
-  DH_get0_pqg(dh, &p, NULL, NULL);
-  if (isValidPublicKey(pubkeyBn, (BIGNUM*)p, q1))
-#endif
     res = MDH_compute_key(secret, nPubkeyLen, pubkeyBn, dh);
   else
     res = -1;
