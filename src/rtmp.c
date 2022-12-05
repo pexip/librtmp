@@ -38,6 +38,10 @@
 #include <polarssl/md5.h>
 #include <polarssl/base64.h>
 #define MD5_DIGEST_LENGTH 16
+#define rtmp_MD5_CTX	md5_context
+#define rtmp_MD5_Init(ctx)	md5_starts(ctx)
+#define rtmp_MD5_Update(ctx,data,len)	md5_update(ctx,(unsigned char *)data,len)
+#define rtmp_MD5_Final(dig,ctx)	md5_finish(ctx,dig)
 
 static const char *my_dhm_P =
     "E4004C1F94182000103D883A448B3F80" \
@@ -56,12 +60,51 @@ static const char *my_dhm_G = "4";
 #define MD5_DIGEST_LENGTH 16
 #include <nettle/base64.h>
 #include <nettle/md5.h>
+typedef struct md5_ctx	rtmp_MD5_CTX;
+#define rtmp_MD5_Init(ctx)	md5_init(ctx)
+#define rtmp_MD5_Update(ctx,data,len)	md5_update(ctx,len,data)
+#define rtmp_MD5_Final(dig,ctx)	md5_digest(ctx,MD5_DIGEST_LENGTH,dig)
 #else	/* USE_OPENSSL */
-#include <openssl/ssl.h>
-#include <openssl/rc4.h>
-#include <openssl/md5.h>
-#include <openssl/bio.h>
-#include <openssl/buffer.h>
+# include <openssl/ssl.h>
+# include <openssl/bio.h>
+# include <openssl/buffer.h>
+# include <openssl/md5.h>
+# if OPENSSL_VERSION_NUMBER < 0x30000000L
+#  define rtmp_MD5_CTX MD5_CTX
+#  define rtmp_MD5_Init MD5_Init
+#  define rtmp_MD5_Update MD5_Update
+#  define rtmp_MD5_Final MD5_Final
+# else
+#  include <openssl/evp.h>
+#  include <openssl/provider.h>
+typedef struct {
+    OSSL_LIB_CTX *lc;
+    OSSL_PROVIDER *prov;
+    EVP_MD *md;
+    EVP_MD_CTX *ctx;
+} rtmp_MD5_CTX;
+#  define rtmp_MD5_Init(mctx) \
+	do { \
+		(mctx)->lc = OSSL_LIB_CTX_new(); \
+		(mctx)->prov = OSSL_PROVIDER_load((mctx)->lc, "default"); \
+		(mctx)->md = EVP_MD_fetch((mctx)->lc, "MD5", NULL); \
+		(mctx)->ctx = EVP_MD_CTX_new(); \
+		EVP_DigestInit((mctx)->ctx, (mctx)->md); \
+	} while (0)
+#  define rtmp_MD5_Update(mctx,data,len)	EVP_DigestUpdate((mctx)->ctx, data, len)
+#  define rtmp_MD5_Final(dig,mctx) \
+	do { \
+		EVP_DigestFinal((mctx)->ctx, dig, NULL); \
+		EVP_MD_CTX_free((mctx)->ctx); \
+		EVP_MD_free((mctx)->md); \
+		OSSL_PROVIDER_unload((mctx)->prov); \
+		OSSL_LIB_CTX_free((mctx)->lc); \
+		(mctx)->ctx = NULL; \
+		(mctx)->md = NULL; \
+		(mctx)->prov = NULL; \
+		(mctx)->lc = NULL; \
+	} while(0)
+# endif
 #endif
 TLS_CTX RTMP_TLS_ctx;
 #endif
@@ -2491,19 +2534,6 @@ b64enc(const unsigned char *input, int length, char *output, int maxsize)
   return 1;
 }
 
-#ifdef USE_POLARSSL
-#define MD5_CTX	md5_context
-#define MD5_Init(ctx)	md5_starts(ctx)
-#define MD5_Update(ctx,data,len)	md5_update(ctx,(unsigned char *)data,len)
-#define MD5_Final(dig,ctx)	md5_finish(ctx,dig)
-#elif defined(USE_GNUTLS)
-typedef struct md5_ctx	MD5_CTX;
-#define MD5_Init(ctx)	md5_init(ctx)
-#define MD5_Update(ctx,data,len)	md5_update(ctx,len,data)
-#define MD5_Final(dig,ctx)	md5_digest(ctx,MD5_DIGEST_LENGTH,dig)
-#else
-#endif
-
 static const AVal av_authmod_adobe = AVC("authmod=adobe");
 static const AVal av_authmod_llnw  = AVC("authmod=llnw");
 
@@ -2533,7 +2563,7 @@ PublisherAuth(RTMP *r, AVal *description)
   char *token_in = NULL;
   char *ptr;
   unsigned char md5sum_val[MD5_DIGEST_LENGTH+1];
-  MD5_CTX md5ctx;
+  rtmp_MD5_CTX md5ctx;
   int challenge2_data;
 #define RESPONSE_LEN 32
 #define CHALLENGE2_LEN 16
@@ -2607,11 +2637,11 @@ PublisherAuth(RTMP *r, AVal *description)
 	    aptr->av_len = strlen(aptr->av_val);
 
 	  /* hash1 = base64enc(md5(user + _aodbeAuthSalt + password)) */
-	  MD5_Init(&md5ctx);
-	  MD5_Update(&md5ctx, user.av_val, user.av_len);
-	  MD5_Update(&md5ctx, salt.av_val, salt.av_len);
-	  MD5_Update(&md5ctx, r->Link.pubPasswd.av_val, r->Link.pubPasswd.av_len);
-	  MD5_Final(md5sum_val, &md5ctx);
+	  rtmp_MD5_Init(&md5ctx);
+	  rtmp_MD5_Update(&md5ctx, user.av_val, user.av_len);
+	  rtmp_MD5_Update(&md5ctx, salt.av_val, salt.av_len);
+	  rtmp_MD5_Update(&md5ctx, r->Link.pubPasswd.av_val, r->Link.pubPasswd.av_len);
+	  rtmp_MD5_Final(md5sum_val, &md5ctx);
           RTMP_Log(RTMP_LOGDEBUG, "%s, md5(%s%s%s) =>", __FUNCTION__,
 	    user.av_val, salt.av_val, r->Link.pubPasswd.av_val);
           RTMP_LogHexString(RTMP_LOGDEBUG, md5sum_val, MD5_DIGEST_LENGTH);
@@ -2624,15 +2654,15 @@ PublisherAuth(RTMP *r, AVal *description)
             b64enc((unsigned char *) &challenge2_data, sizeof(int), challenge2, CHALLENGE2_LEN);
             RTMP_Log(RTMP_LOGDEBUG, "%s, b64(%d) = %s", __FUNCTION__, challenge2_data, challenge2);
 
-	  MD5_Init(&md5ctx);
-	  MD5_Update(&md5ctx, salted2, B64DIGEST_LEN);
+	  rtmp_MD5_Init(&md5ctx);
+	  rtmp_MD5_Update(&md5ctx, salted2, B64DIGEST_LEN);
             /* response = base64enc(md5(hash1 + opaque + challenge2)) */
 	  if (opaque.av_len)
-	    MD5_Update(&md5ctx, opaque.av_val, opaque.av_len);
+	    rtmp_MD5_Update(&md5ctx, opaque.av_val, opaque.av_len);
 	  else if (challenge.av_len)
-	    MD5_Update(&md5ctx, challenge.av_val, challenge.av_len);
-	  MD5_Update(&md5ctx, challenge2, B64INT_LEN);
-	  MD5_Final(md5sum_val, &md5ctx);
+	    rtmp_MD5_Update(&md5ctx, challenge.av_val, challenge.av_len);
+	  rtmp_MD5_Update(&md5ctx, challenge2, B64INT_LEN);
+	  rtmp_MD5_Final(md5sum_val, &md5ctx);
 
           RTMP_Log(RTMP_LOGDEBUG, "%s, md5(%s%s%s) =>", __FUNCTION__,
 	    salted2, opaque.av_len ? opaque.av_val : "", challenge2);
@@ -2773,13 +2803,13 @@ PublisherAuth(RTMP *r, AVal *description)
           sprintf(cnonce, "%08x", rand());
 
           /* hash1 = hexenc(md5(user + ":" + realm + ":" + password)) */
-	  MD5_Init(&md5ctx);
-	  MD5_Update(&md5ctx, user.av_val, user.av_len);
-	  MD5_Update(&md5ctx, ":", 1);
-	  MD5_Update(&md5ctx, realm, sizeof(realm)-1);
-	  MD5_Update(&md5ctx, ":", 1);
-	  MD5_Update(&md5ctx, r->Link.pubPasswd.av_val, r->Link.pubPasswd.av_len);
-	  MD5_Final(md5sum_val, &md5ctx);
+	  rtmp_MD5_Init(&md5ctx);
+	  rtmp_MD5_Update(&md5ctx, user.av_val, user.av_len);
+	  rtmp_MD5_Update(&md5ctx, ":", 1);
+	  rtmp_MD5_Update(&md5ctx, realm, sizeof(realm)-1);
+	  rtmp_MD5_Update(&md5ctx, ":", 1);
+	  rtmp_MD5_Update(&md5ctx, r->Link.pubPasswd.av_val, r->Link.pubPasswd.av_len);
+	  rtmp_MD5_Final(md5sum_val, &md5ctx);
           RTMP_Log(RTMP_LOGDEBUG, "%s, md5(%s:%s:%s) =>", __FUNCTION__,
 	    user.av_val, realm, r->Link.pubPasswd.av_val);
           RTMP_LogHexString(RTMP_LOGDEBUG, md5sum_val, MD5_DIGEST_LENGTH);
@@ -2792,32 +2822,32 @@ PublisherAuth(RTMP *r, AVal *description)
 	  if (ptr)
 	    apptmp.av_len = ptr - apptmp.av_val;
 
-	  MD5_Init(&md5ctx);
-	  MD5_Update(&md5ctx, method, sizeof(method)-1);
-	  MD5_Update(&md5ctx, ":/", 2);
-	  MD5_Update(&md5ctx, apptmp.av_val, apptmp.av_len);
+	  rtmp_MD5_Init(&md5ctx);
+	  rtmp_MD5_Update(&md5ctx, method, sizeof(method)-1);
+	  rtmp_MD5_Update(&md5ctx, ":/", 2);
+	  rtmp_MD5_Update(&md5ctx, apptmp.av_val, apptmp.av_len);
 	  if (!AValChr(&apptmp, '/'))
-	    MD5_Update(&md5ctx, "/_definst_", sizeof("/_definst_") - 1);
-	  MD5_Final(md5sum_val, &md5ctx);
+	    rtmp_MD5_Update(&md5ctx, "/_definst_", sizeof("/_definst_") - 1);
+	  rtmp_MD5_Final(md5sum_val, &md5ctx);
           RTMP_Log(RTMP_LOGDEBUG, "%s, md5(%s:/%.*s) =>", __FUNCTION__,
 	    method, apptmp.av_len, apptmp.av_val);
           RTMP_LogHexString(RTMP_LOGDEBUG, md5sum_val, MD5_DIGEST_LENGTH);
           hexenc(md5sum_val, MD5_DIGEST_LENGTH, hash2);
 
           /* hash3 = hexenc(md5(hash1 + ":" + nonce + ":" + nchex + ":" + cnonce + ":" + qop + ":" + hash2)) */
-	  MD5_Init(&md5ctx);
-	  MD5_Update(&md5ctx, hash1, HEXHASH_LEN);
-	  MD5_Update(&md5ctx, ":", 1);
-	  MD5_Update(&md5ctx, nonce.av_val, nonce.av_len);
-	  MD5_Update(&md5ctx, ":", 1);
-	  MD5_Update(&md5ctx, nchex, sizeof(nchex)-1);
-	  MD5_Update(&md5ctx, ":", 1);
-	  MD5_Update(&md5ctx, cnonce, sizeof(cnonce)-1);
-	  MD5_Update(&md5ctx, ":", 1);
-	  MD5_Update(&md5ctx, qop, sizeof(qop)-1);
-	  MD5_Update(&md5ctx, ":", 1);
-	  MD5_Update(&md5ctx, hash2, HEXHASH_LEN);
-	  MD5_Final(md5sum_val, &md5ctx);
+	  rtmp_MD5_Init(&md5ctx);
+	  rtmp_MD5_Update(&md5ctx, hash1, HEXHASH_LEN);
+	  rtmp_MD5_Update(&md5ctx, ":", 1);
+	  rtmp_MD5_Update(&md5ctx, nonce.av_val, nonce.av_len);
+	  rtmp_MD5_Update(&md5ctx, ":", 1);
+	  rtmp_MD5_Update(&md5ctx, nchex, sizeof(nchex)-1);
+	  rtmp_MD5_Update(&md5ctx, ":", 1);
+	  rtmp_MD5_Update(&md5ctx, cnonce, sizeof(cnonce)-1);
+	  rtmp_MD5_Update(&md5ctx, ":", 1);
+	  rtmp_MD5_Update(&md5ctx, qop, sizeof(qop)-1);
+	  rtmp_MD5_Update(&md5ctx, ":", 1);
+	  rtmp_MD5_Update(&md5ctx, hash2, HEXHASH_LEN);
+	  rtmp_MD5_Final(md5sum_val, &md5ctx);
           RTMP_Log(RTMP_LOGDEBUG, "%s, md5(%s:%s:%s:%s:%s:%s) =>", __FUNCTION__,
 	    hash1, nonce.av_val, nchex, cnonce, qop, hash2);
           RTMP_LogHexString(RTMP_LOGDEBUG, md5sum_val, MD5_DIGEST_LENGTH);
