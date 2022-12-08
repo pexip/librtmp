@@ -197,7 +197,6 @@ static DH *DH_from_MDH(const MDH *mdh)
 {
   BIGNUM *g = NULL, *p = NULL, *pub = NULL, *priv = NULL;
   DH *dh = NULL;
-  int res;
 
   if (mdh->p == NULL || mdh->g == NULL)
     goto failed;
@@ -315,8 +314,6 @@ failed:
   MP_free(mdh->pub_key);
   mdh->pub_key = NULL;
 
-  MP_free(p);
-  MP_free(g);
   DH_free(dh);
 
   return 0;
