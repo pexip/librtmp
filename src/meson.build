@@ -15,7 +15,7 @@ librtmp_sources = [
   'rtmp.c'
 ]
 
-rtmp_lib = shared_library('rtmp',
+rtmp_lib = library('rtmp',
   librtmp_sources,
   dependencies : [libssl_dep, libcrypto_dep, libz_dep],
   install : true,
