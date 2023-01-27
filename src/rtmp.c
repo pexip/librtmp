@@ -2597,7 +2597,7 @@ PublisherAuth(RTMP *r, AVal *description)
       else if((token_in = strstr(description->av_val, "?reason=needauth")) != NULL)
         {
           char *par, *val = NULL, *orig_ptr;
-	  AVal user, salt, opaque, challenge, *aptr = NULL;
+	  AVal user = { 0 }, salt = { 0 }, opaque = { 0 }, challenge, *aptr = NULL;
 	  opaque.av_len = 0;
 	  challenge.av_len = 0;
 
@@ -2747,7 +2747,7 @@ PublisherAuth(RTMP *r, AVal *description)
           char *orig_ptr;
           char *par, *val = NULL;
 	  char hash1[HEXHASH_LEN+1], hash2[HEXHASH_LEN+1], hash3[HEXHASH_LEN+1];
-	  AVal user, nonce, *aptr = NULL;
+	  AVal user = { 0 }, nonce = { 0 }, *aptr = NULL;
 	  AVal apptmp;
 
           /* llnw auth method
