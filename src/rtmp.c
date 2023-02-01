@@ -2598,8 +2598,11 @@ PublisherAuth(RTMP *r, AVal *description)
         {
           char *par, *val = NULL, *orig_ptr;
 	  AVal user, salt, opaque, challenge, *aptr = NULL;
-	  opaque.av_len = 0;
-	  challenge.av_len = 0;
+
+    memset(&user, 0, sizeof(AVal));
+    memset(&salt, 0, sizeof(AVal));
+    memset(&opaque, 0, sizeof(AVal));
+    memset(&challenge, 0, sizeof(AVal));
 
           ptr = orig_ptr = strdup(token_in);
           while (ptr)
@@ -2749,6 +2752,9 @@ PublisherAuth(RTMP *r, AVal *description)
 	  char hash1[HEXHASH_LEN+1], hash2[HEXHASH_LEN+1], hash3[HEXHASH_LEN+1];
 	  AVal user, nonce, *aptr = NULL;
 	  AVal apptmp;
+
+    memset(&user, 0, sizeof(AVal));
+    memset(&nonce, 0, sizeof(AVal));
 
           /* llnw auth method
            * Seems to be closely based on HTTP Digest Auth:
